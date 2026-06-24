@@ -1,11 +1,29 @@
--- Hotfix: create environments schema when migration 0065+ was never applied
--- but the server journal already reports up-to-date (common after fork deploy
--- on an older embedded Postgres volume).
+-- Hotfix: repair environments schema when migration 0065+ drifted on an older volume.
 --
--- Usage (inside Paperclip container or against instance Postgres):
---   psql "$DATABASE_URL" -f scripts/ops/hotfix-environments-schema.sql
+-- Usage (inside Paperclip container):
+--   psql "$DATABASE_URL" -f /app/scripts/ops/hotfix-environments-schema.sql
 --
--- Then restart Paperclip and retry chat wakeup.
+-- Then restart Paperclip. With PAPERCLIP_MIGRATION_AUTO_APPLY=true, remaining
+-- migrations apply idempotently on boot.
+
+-- Drop broken partial tables (e.g. environments without company_id).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'environments'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'environments'
+      AND column_name = 'company_id'
+  ) THEN
+    DROP TABLE IF EXISTS environment_leases CASCADE;
+    DROP TABLE IF EXISTS environments CASCADE;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "environments" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -68,7 +86,6 @@ ALTER TABLE "agents" ADD COLUMN IF NOT EXISTS "default_environment_id" uuid;
 CREATE INDEX IF NOT EXISTS "agents_company_default_environment_idx"
   ON "agents" USING btree ("company_id","default_environment_id");
 
--- Seed default local environments for every company missing one.
 INSERT INTO environments (company_id, name, description, driver, status, config, metadata, created_at, updated_at)
 SELECT
   c.id,
