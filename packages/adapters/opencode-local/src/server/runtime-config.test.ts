@@ -44,8 +44,10 @@ describe("prepareOpenCodeRuntimeConfig", () => {
       config: {},
     });
     cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+    cleanupPaths.add(prepared.env.XDG_CACHE_HOME);
 
     expect(prepared.env.XDG_CONFIG_HOME).not.toBe(configHome);
+    expect(prepared.env.XDG_CACHE_HOME).toMatch(/^\/.*paperclip-opencode-cache-/);
     const runtimeConfig = JSON.parse(
       await fs.readFile(
         path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"),
@@ -62,7 +64,9 @@ describe("prepareOpenCodeRuntimeConfig", () => {
 
     await prepared.cleanup();
     cleanupPaths.delete(prepared.env.XDG_CONFIG_HOME);
+    cleanupPaths.delete(prepared.env.XDG_CACHE_HOME);
     await expect(fs.access(prepared.env.XDG_CONFIG_HOME)).rejects.toThrow();
+    await expect(fs.access(prepared.env.XDG_CACHE_HOME)).rejects.toThrow();
   });
 
   it("merges custom providers from PAPERCLIP_OPENCODE_PROVIDERS into the config", async () => {

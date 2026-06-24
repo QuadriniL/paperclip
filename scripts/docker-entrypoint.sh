@@ -39,4 +39,7 @@ if [ "$changed" = "1" ]; then
     chown -R node:node /paperclip
 fi
 
+mkdir -p /paperclip/.cache
+chown -R node:node /paperclip/.cache 2>/dev/null || true
+
 exec gosu node "$@"

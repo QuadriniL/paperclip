@@ -123,6 +123,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
 
   const sourceConfigDir = path.join(resolveXdgConfigHome(input.env), "opencode");
   const runtimeConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-config-"));
+  const runtimeCacheHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-cache-"));
   const runtimeConfigDir = path.join(runtimeConfigHome, "opencode");
   const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
 
@@ -199,10 +200,12 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     env: {
       ...input.env,
       XDG_CONFIG_HOME: runtimeConfigHome,
+      XDG_CACHE_HOME: runtimeCacheHome,
     },
     notes,
     cleanup: async () => {
       await fs.rm(runtimeConfigHome, { recursive: true, force: true });
+      await fs.rm(runtimeCacheHome, { recursive: true, force: true });
     },
   };
 }
