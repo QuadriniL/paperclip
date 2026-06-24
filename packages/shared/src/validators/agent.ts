@@ -140,6 +140,27 @@ export const wakeAgentSchema = z.object({
 
 export type WakeAgent = z.infer<typeof wakeAgentSchema>;
 
+export const chatWakePayloadSchema = z.object({
+  mode: z.literal("chat"),
+  sessionId: z.string().min(1),
+  threadId: z.string().min(1),
+  messageId: z.string().min(1).optional(),
+  userMessage: z.string().min(1),
+  transcript: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant", "system"]),
+        content: z.string(),
+        at: z.string().optional(),
+      }),
+    )
+    .optional(),
+  thinkLevel: z.string().optional(),
+  modelProfile: z.string().optional(),
+});
+
+export type ChatWakePayload = z.infer<typeof chatWakePayloadSchema>;
+
 export const resetAgentSessionSchema = z.object({
   taskKey: z.string().min(1).optional().nullable(),
 });

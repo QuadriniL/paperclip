@@ -13,6 +13,11 @@ import {
   materializePaperclipSkillCopy,
   refreshPaperclipWorkspaceEnvForExecution,
   renderPaperclipWakePrompt,
+  renderPaperclipChatWakePrompt,
+  isPaperclipPureChatWake,
+  buildPaperclipChatWakePayload,
+  readPaperclipChatThreadId,
+  stringifyPaperclipChatWakePayload,
   runningProcesses,
   runChildProcess,
   sanitizeSshRemoteEnv,
@@ -1159,5 +1164,53 @@ describe("appendWithByteCap", () => {
     expect(output).not.toContain("\uFFFD");
     expect(Buffer.from(output, "utf8").toString("utf8")).toBe(output);
     expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(7);
+  });
+});
+
+describe("paperclip chat wake", () => {
+  it("detects pure chat wake without issue bridge fields", () => {
+    expect(isPaperclipPureChatWake("bizcursor_chat", { mode: "chat", threadId: "t1" })).toBe(true);
+    expect(
+      isPaperclipPureChatWake("bizcursor_chat", {
+        mode: "chat",
+        issueId: "issue-1",
+        commentId: "comment-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("builds chat task key from thread id", () => {
+    expect(readPaperclipChatThreadId({ threadId: "thread-abc" }, null)).toBe("thread-abc");
+    expect(readPaperclipChatThreadId(null, { taskKey: "chat:thread-xyz" })).toBe("thread-xyz");
+  });
+
+  it("renders chat prompt with user message and without inbox boilerplate", () => {
+    const payload = buildPaperclipChatWakePayload({
+      threadId: "thread-1",
+      sessionId: "session-1",
+      userMessage: "Preciso revisar o pricing",
+      transcript: [
+        { role: "user", content: "Oi", at: "2026-06-24T10:00:00.000Z" },
+        { role: "assistant", content: "Olá!", at: "2026-06-24T10:00:01.000Z" },
+      ],
+      runId: "run-1",
+    });
+    const prompt = renderPaperclipChatWakePrompt(payload);
+    expect(prompt).toContain("Preciso revisar o pricing");
+    expect(prompt).toContain("BizCursor Chat Wake");
+    expect(prompt).not.toContain("fetch your inbox");
+    expect(prompt).not.toContain("fetch the API thread");
+  });
+
+  it("stringifies chat wake payload for adapter env", () => {
+    const json = stringifyPaperclipChatWakePayload({
+      mode: "chat",
+      threadId: "t1",
+      sessionId: "s1",
+      userMessage: "hello",
+      transcript: [],
+    });
+    expect(json).toContain('"threadId":"t1"');
+    expect(json).toContain('"userMessage":"hello"');
   });
 });

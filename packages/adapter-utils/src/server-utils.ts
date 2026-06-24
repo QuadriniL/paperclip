@@ -668,6 +668,167 @@ export function stringifyPaperclipWakePayload(value: unknown): string | null {
   return JSON.stringify(normalized);
 }
 
+export const PAPERCLIP_CHAT_WAKE_PAYLOAD_KEY = "paperclipChatWake";
+export const PAPERCLIP_CHAT_WAKE_REASON = "bizcursor_chat";
+
+export type PaperclipChatWakeTranscriptRole = "user" | "assistant" | "system";
+
+export interface PaperclipChatWakeTranscriptEntry {
+  role: PaperclipChatWakeTranscriptRole;
+  content: string;
+  at?: string | null;
+}
+
+export interface PaperclipChatWakePayload {
+  mode: "chat";
+  reason?: string | null;
+  threadId: string;
+  sessionId: string;
+  messageId?: string | null;
+  userMessage: string;
+  transcript: PaperclipChatWakeTranscriptEntry[];
+  runId?: string | null;
+}
+
+const MAX_CHAT_TRANSCRIPT_ENTRIES = 40;
+const MAX_CHAT_TRANSCRIPT_CHARS = 32_000;
+
+function normalizeChatTranscriptEntry(value: unknown): PaperclipChatWakeTranscriptEntry | null {
+  const row = parseObject(value);
+  const roleRaw = asString(row.role, "").trim().toLowerCase();
+  const role: PaperclipChatWakeTranscriptRole =
+    roleRaw === "assistant" || roleRaw === "system" ? roleRaw : "user";
+  const content = asString(row.content, "").trim();
+  if (!content) return null;
+  const at = asString(row.at, "").trim() || null;
+  return { role, content, at };
+}
+
+export function isPaperclipPureChatWake(
+  reason: string | null | undefined,
+  payload: Record<string, unknown> | null | undefined,
+): boolean {
+  const issueId = asString(payload?.issueId, "").trim() || asString(payload?.taskId, "").trim();
+  const commentId = asString(payload?.commentId, "").trim();
+  if (issueId && commentId) return false;
+  if (payload?.mode === "chat") return true;
+  if (reason === PAPERCLIP_CHAT_WAKE_REASON) return true;
+  return false;
+}
+
+export function readPaperclipChatThreadId(
+  payload: Record<string, unknown> | null | undefined,
+  contextSnapshot?: Record<string, unknown> | null | undefined,
+): string | null {
+  const fromPayload =
+    asString(payload?.threadId, "").trim() || asString(payload?.bizcursorThreadId, "").trim();
+  if (fromPayload) return fromPayload;
+  const fromContextThread = asString(contextSnapshot?.bizcursorThreadId, "").trim();
+  if (fromContextThread) return fromContextThread;
+  const taskKey = asString(contextSnapshot?.taskKey, "").trim();
+  if (taskKey.startsWith("chat:")) return taskKey.slice("chat:".length);
+  return null;
+}
+
+export function buildPaperclipChatWakePayload(input: {
+  reason?: string | null;
+  threadId: string;
+  sessionId?: string | null;
+  messageId?: string | null;
+  userMessage: string;
+  transcript?: unknown;
+  runId?: string | null;
+}): PaperclipChatWakePayload | null {
+  const threadId = input.threadId.trim();
+  const userMessage = input.userMessage.trim();
+  if (!threadId || !userMessage) return null;
+  const sessionId = input.sessionId?.trim() || threadId;
+  const transcript: PaperclipChatWakeTranscriptEntry[] = [];
+  let transcriptChars = 0;
+  const rawTranscript = Array.isArray(input.transcript) ? input.transcript : [];
+  for (const entry of rawTranscript.slice(-MAX_CHAT_TRANSCRIPT_ENTRIES)) {
+    const normalized = normalizeChatTranscriptEntry(entry);
+    if (!normalized) continue;
+    const nextChars = transcriptChars + normalized.content.length;
+    if (nextChars > MAX_CHAT_TRANSCRIPT_CHARS) break;
+    transcript.push(normalized);
+    transcriptChars = nextChars;
+  }
+  return {
+    mode: "chat",
+    reason: input.reason?.trim() || PAPERCLIP_CHAT_WAKE_REASON,
+    threadId,
+    sessionId,
+    messageId: input.messageId?.trim() || null,
+    userMessage,
+    transcript,
+    runId: input.runId?.trim() || null,
+  };
+}
+
+export function normalizePaperclipChatWakePayload(value: unknown): PaperclipChatWakePayload | null {
+  const raw = parseObject(value);
+  const threadId =
+    asString(raw.threadId, "").trim() || asString(raw.bizcursorThreadId, "").trim();
+  if (!threadId) return null;
+  return buildPaperclipChatWakePayload({
+    reason: asString(raw.reason, "").trim() || null,
+    threadId,
+    sessionId: asString(raw.sessionId, "").trim() || null,
+    messageId:
+      asString(raw.messageId, "").trim() || asString(raw.bizcursorMessageId, "").trim() || null,
+    userMessage: asString(raw.userMessage, "").trim() || asString(raw.text, "").trim(),
+    transcript: raw.transcript,
+    runId: asString(raw.runId, "").trim() || null,
+  });
+}
+
+export function stringifyPaperclipChatWakePayload(value: unknown): string | null {
+  const normalized = normalizePaperclipChatWakePayload(value);
+  if (!normalized) return null;
+  return JSON.stringify(normalized);
+}
+
+export function renderPaperclipChatWakePrompt(
+  value: unknown,
+  options: { resumedSession?: boolean } = {},
+): string {
+  const normalized = normalizePaperclipChatWakePayload(value);
+  if (!normalized) return "";
+  const resumedSession = options.resumedSession === true;
+  const lines = resumedSession
+    ? [
+        "## BizCursor Chat Resume",
+        "",
+        "You are resuming a direct chat session (not a Paperclip issue workflow).",
+        "Focus on the latest user message and continue the conversation naturally.",
+        "",
+        `- session: ${normalized.threadId}`,
+        `- run: ${normalized.runId ?? "unknown"}`,
+      ]
+    : [
+        "## BizCursor Chat Wake",
+        "",
+        "You are responding in a direct chat session (not a Paperclip issue workflow).",
+        "Answer the user's latest message. Use Paperclip API only if you need to delegate work or create tasks.",
+        "",
+        `- session: ${normalized.threadId}`,
+        `- run: ${normalized.runId ?? "unknown"}`,
+      ];
+
+  if (normalized.transcript.length > 0) {
+    lines.push("", "### Conversation");
+    for (const entry of normalized.transcript) {
+      const label =
+        entry.role === "assistant" ? "Assistant" : entry.role === "system" ? "System" : "User";
+      lines.push("", `**${label}:**`, entry.content);
+    }
+  }
+
+  lines.push("", "### Latest user message", "", normalized.userMessage);
+  return lines.join("\n");
+}
+
 export function readPaperclipIssueWorkModeFromContext(value: unknown): string | null {
   const context = parseObject(value);
   const issue = parseObject(context.paperclipIssue);

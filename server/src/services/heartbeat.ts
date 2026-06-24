@@ -181,6 +181,9 @@ import {
   type SessionCompactionPolicy,
 } from "@paperclipai/adapter-utils";
 import {
+  buildPaperclipChatWakePayload,
+  isPaperclipPureChatWake,
+  readPaperclipChatThreadId,
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -224,6 +227,7 @@ const LIVENESS_BOOKKEEPING_ACTIVITY_ACTIONS = [
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const WAKE_COMMENT_IDS_KEY = "wakeCommentIds";
 const PAPERCLIP_WAKE_PAYLOAD_KEY = "paperclipWake";
+const PAPERCLIP_CHAT_WAKE_KEY = "paperclipChatWake";
 const PAPERCLIP_HARNESS_CHECKOUT_KEY = "paperclipHarnessCheckedOut";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
@@ -2319,6 +2323,52 @@ function enrichWakeContextSnapshot(input: {
   payload: Record<string, unknown> | null;
 }) {
   const { contextSnapshot, reason, source, triggerDetail, payload } = input;
+  if (isPaperclipPureChatWake(reason, payload)) {
+    const threadId = readPaperclipChatThreadId(payload, contextSnapshot);
+    const sessionId = readNonEmptyString(payload?.sessionId) ?? threadId;
+    const userMessage =
+      readNonEmptyString(payload?.userMessage) ?? readNonEmptyString(payload?.text);
+    const messageId =
+      readNonEmptyString(payload?.messageId) ?? readNonEmptyString(payload?.bizcursorMessageId);
+
+    if (threadId) {
+      contextSnapshot.taskKey = `chat:${threadId}`;
+      contextSnapshot.wakeMode = "chat";
+      contextSnapshot.bizcursorThreadId = threadId;
+    }
+    if (sessionId) contextSnapshot.bizcursorSessionId = sessionId;
+    if (userMessage) contextSnapshot.bizcursorUserMessage = userMessage;
+    if (messageId) contextSnapshot.bizcursorMessageId = messageId;
+    if (Array.isArray(payload?.transcript)) {
+      contextSnapshot.bizcursorTranscript = payload.transcript;
+    }
+    if (!readNonEmptyString(contextSnapshot.wakeReason) && reason) {
+      contextSnapshot.wakeReason = reason;
+    }
+    if (!readNonEmptyString(contextSnapshot.wakeSource) && source) {
+      contextSnapshot.wakeSource = source;
+    }
+    if (!readNonEmptyString(contextSnapshot.wakeTriggerDetail) && triggerDetail) {
+      contextSnapshot.wakeTriggerDetail = triggerDetail;
+    }
+    delete contextSnapshot.issueId;
+    delete contextSnapshot.taskId;
+    delete contextSnapshot.commentId;
+    delete contextSnapshot.wakeCommentId;
+    delete contextSnapshot[WAKE_COMMENT_IDS_KEY];
+    delete contextSnapshot[PAPERCLIP_WAKE_PAYLOAD_KEY];
+    normalizeModelProfileWakeContext({ contextSnapshot, payload });
+    normalizeInteractionContinuationWakeContext(contextSnapshot, payload);
+
+    return {
+      contextSnapshot,
+      issueIdFromPayload: null,
+      commentIdFromPayload: null,
+      taskKey: readNonEmptyString(contextSnapshot.taskKey),
+      wakeCommentId: null,
+    };
+  }
+
   const issueIdFromPayload = readNonEmptyString(payload?.["issueId"]) ?? readNonEmptyString(payload?.["taskId"]);
   const commentIdFromPayload = readNonEmptyString(payload?.["commentId"]);
   const taskKey = deriveTaskKey(contextSnapshot, payload);
@@ -7626,6 +7676,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const provider = result.provider ?? "unknown";
     const biller = resolveLedgerBiller(result);
     const ledgerScope = await resolveLedgerScopeForRun(db, agent.companyId, run);
+    const runContext = parseObject(run.contextSnapshot);
+    const chatThreadId = readNonEmptyString(runContext.bizcursorThreadId);
+    const chatSessionId = readNonEmptyString(runContext.bizcursorSessionId);
 
     await db
       .update(agentRuntimeState)
@@ -7650,6 +7703,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         agentId: agent.id,
         issueId: ledgerScope.issueId,
         projectId: ledgerScope.projectId,
+        billingCode: chatThreadId
+          ? `bizcursor:${chatThreadId}${chatSessionId && chatSessionId !== chatThreadId ? `:${chatSessionId}` : ""}`
+          : undefined,
         provider,
         biller,
         billingType,
@@ -8007,6 +8063,31 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     } else {
       delete context.paperclipContinuationSummary;
     }
+    const isPureChatRun = readNonEmptyString(context.wakeMode) === "chat";
+    if (isPureChatRun) {
+      const threadId = readPaperclipChatThreadId(null, context);
+      const chatWake = threadId
+        ? buildPaperclipChatWakePayload({
+            reason: readNonEmptyString(context.wakeReason),
+            threadId,
+            sessionId: readNonEmptyString(context.bizcursorSessionId),
+            messageId: readNonEmptyString(context.bizcursorMessageId),
+            userMessage: readNonEmptyString(context.bizcursorUserMessage) ?? "",
+            transcript: context.bizcursorTranscript,
+            runId: run.id,
+          })
+        : null;
+      if (chatWake) {
+        context[PAPERCLIP_CHAT_WAKE_KEY] = chatWake;
+      } else {
+        delete context[PAPERCLIP_CHAT_WAKE_KEY];
+      }
+      delete context[PAPERCLIP_WAKE_PAYLOAD_KEY];
+      delete context.paperclipIssue;
+      delete context.paperclipTaskMarkdown;
+      delete context.paperclipWakeComment;
+      delete context.paperclipContinuationSummary;
+    } else {
     const paperclipWakePayload = await buildPaperclipWakePayload({
       db,
       companyId: agent.companyId,
@@ -8070,6 +8151,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       context.paperclipTaskMarkdown = taskMarkdown;
     } else {
       delete context.paperclipTaskMarkdown;
+    }
     }
     const existingExecutionWorkspace =
       issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;

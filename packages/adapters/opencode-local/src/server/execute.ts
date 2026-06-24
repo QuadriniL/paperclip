@@ -36,7 +36,10 @@ import {
   ensurePathInEnv,
   refreshPaperclipWorkspaceEnvForExecution,
   renderTemplate,
+  normalizePaperclipChatWakePayload,
+  renderPaperclipChatWakePrompt,
   renderPaperclipWakePrompt,
+  stringifyPaperclipChatWakePayload,
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
@@ -278,7 +281,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const linkedIssueIds = Array.isArray(context.issueIds)
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
-  const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const chatWake = normalizePaperclipChatWakePayload(context.paperclipChatWake);
+  const wakePayloadJson = chatWake
+    ? stringifyPaperclipChatWakePayload(chatWake)
+    : stringifyPaperclipWakePayload(context.paperclipWake);
   const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
   if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
@@ -537,25 +543,35 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       context,
     };
     const renderedBootstrapPrompt =
-      !sessionId && bootstrapPromptTemplate.trim().length > 0
+      !chatWake && !sessionId && bootstrapPromptTemplate.trim().length > 0
         ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
         : "";
-    const wakePrompt = renderPaperclipWakePrompt(context.paperclipWake, { resumedSession: Boolean(sessionId) });
+    const chatWakePrompt = chatWake
+      ? renderPaperclipChatWakePrompt(chatWake, { resumedSession: Boolean(sessionId) })
+      : "";
+    const wakePrompt = chatWake
+      ? ""
+      : renderPaperclipWakePrompt(context.paperclipWake, { resumedSession: Boolean(sessionId) });
     const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
-    const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
+    const renderedPrompt =
+      chatWake || shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
     const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-    const prompt = joinPromptSections([
-      instructionsPrefix,
-      renderedBootstrapPrompt,
-      wakePrompt,
-      sessionHandoffNote,
-      renderedPrompt,
-    ]);
+    const prompt = joinPromptSections(
+      chatWake
+        ? [instructionsPrefix, chatWakePrompt, sessionHandoffNote]
+        : [
+            instructionsPrefix,
+            renderedBootstrapPrompt,
+            wakePrompt,
+            sessionHandoffNote,
+            renderedPrompt,
+          ],
+    );
     const promptMetrics = {
       promptChars: prompt.length,
       instructionsChars: instructionsPrefix.length,
       bootstrapPromptChars: renderedBootstrapPrompt.length,
-      wakePromptChars: wakePrompt.length,
+      wakePromptChars: chatWake ? chatWakePrompt.length : wakePrompt.length,
       sessionHandoffChars: sessionHandoffNote.length,
       heartbeatPromptChars: renderedPrompt.length,
     };
