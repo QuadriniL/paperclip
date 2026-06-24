@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
-const serverPackageJson = path.join(repoRoot, "server/package.json");
-const requireFromServer = createRequire(serverPackageJson);
-const postgres = requireFromServer("postgres");
+const dbPackageJson = path.join(repoRoot, "packages/db/package.json");
+const requireFromDb = createRequire(dbPackageJson);
+const postgres = requireFromDb("postgres");
 
 function resolveDatabaseUrl(): string {
   const fromEnv = process.env.DATABASE_URL?.trim();
