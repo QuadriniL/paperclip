@@ -274,6 +274,8 @@ async function applyPendingMigrationsManually(
 
       await runInTransaction(sql, async () => {
         for (const statement of splitMigrationStatements(migrationContent)) {
+          const statementApplied = await migrationStatementAlreadyApplied(sql, statement);
+          if (statementApplied) continue;
           await sql.unsafe(statement);
         }
 
@@ -429,6 +431,11 @@ async function migrationStatementAlreadyApplied(
   const createIndexMatch = normalized.match(/^CREATE (?:UNIQUE )?INDEX(?: IF NOT EXISTS)? "([^"]+)"/i);
   if (createIndexMatch) {
     return indexExists(sql, createIndexMatch[1]);
+  }
+
+  const dropIndexMatch = normalized.match(/^DROP INDEX(?: IF EXISTS)? "([^"]+)"/i);
+  if (dropIndexMatch) {
+    return !(await indexExists(sql, dropIndexMatch[1]));
   }
 
   const addConstraintMatch = normalized.match(/^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i);
