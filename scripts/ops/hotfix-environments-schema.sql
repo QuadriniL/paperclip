@@ -7,26 +7,11 @@
 -- Then restart Paperclip. With PAPERCLIP_MIGRATION_AUTO_APPLY=true, remaining
 -- migrations apply idempotently on boot.
 
--- Drop broken partial tables (e.g. environments without company_id).
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'environments'
-  ) AND NOT EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'environments'
-      AND column_name = 'company_id'
-  ) THEN
-    DROP TABLE IF EXISTS environment_leases CASCADE;
-    DROP TABLE IF EXISTS environments CASCADE;
-  END IF;
-END $$;
+-- Broken/partial environments tables block CREATE IF NOT EXISTS — drop and recreate.
+DROP TABLE IF EXISTS environment_leases CASCADE;
+DROP TABLE IF EXISTS environments CASCADE;
 
-CREATE TABLE IF NOT EXISTS "environments" (
+CREATE TABLE "environments" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "company_id" uuid NOT NULL,
   "name" text NOT NULL,
@@ -39,7 +24,7 @@ CREATE TABLE IF NOT EXISTS "environments" (
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "environment_leases" (
+CREATE TABLE "environment_leases" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "company_id" uuid NOT NULL,
   "environment_id" uuid NOT NULL,
@@ -61,25 +46,27 @@ CREATE TABLE IF NOT EXISTS "environment_leases" (
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'environments_company_id_companies_id_fk'
-  ) THEN
-    ALTER TABLE "environments"
-      ADD CONSTRAINT "environments_company_id_companies_id_fk"
-      FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id")
-      ON DELETE cascade ON UPDATE no action;
-  END IF;
-END $$;
+ALTER TABLE "environments"
+  ADD CONSTRAINT "environments_company_id_companies_id_fk"
+  FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id")
+  ON DELETE cascade ON UPDATE no action;
 
-CREATE INDEX IF NOT EXISTS "environments_company_status_idx"
+ALTER TABLE "environment_leases"
+  ADD CONSTRAINT "environment_leases_company_id_companies_id_fk"
+  FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id")
+  ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "environment_leases"
+  ADD CONSTRAINT "environment_leases_environment_id_environments_id_fk"
+  FOREIGN KEY ("environment_id") REFERENCES "public"."environments"("id")
+  ON DELETE cascade ON UPDATE no action;
+
+CREATE INDEX "environments_company_status_idx"
   ON "environments" USING btree ("company_id","status");
-CREATE INDEX IF NOT EXISTS "environments_company_name_idx"
+CREATE INDEX "environments_company_name_idx"
   ON "environments" USING btree ("company_id","name");
 
-DROP INDEX IF EXISTS "environments_company_driver_idx";
-CREATE UNIQUE INDEX IF NOT EXISTS "environments_company_driver_idx"
+CREATE UNIQUE INDEX "environments_company_driver_idx"
   ON "environments" USING btree ("company_id","driver")
   WHERE "driver" = 'local';
 
@@ -98,8 +85,4 @@ SELECT
   '{"managedByPaperclip":true,"defaultForCompany":true}'::jsonb,
   NOW(),
   NOW()
-FROM companies c
-WHERE NOT EXISTS (
-  SELECT 1 FROM environments e
-  WHERE e.company_id = c.id AND e.driver = 'local'
-);
+FROM companies c;
