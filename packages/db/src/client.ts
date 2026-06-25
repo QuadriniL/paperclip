@@ -443,6 +443,8 @@ async function migrationStatementAlreadyApplied(
 
   const dropIndexMatch = normalized.match(/^DROP INDEX(?: IF EXISTS)? "([^"]+)"/i);
   if (dropIndexMatch) {
+    // DROP INDEX IF EXISTS is idempotent; replacement indexes are verified via CREATE INDEX.
+    if (/ IF EXISTS/i.test(normalized) || options.lenientUnknown) return true;
     return !(await indexExists(sql, dropIndexMatch[1]));
   }
 
@@ -450,6 +452,8 @@ async function migrationStatementAlreadyApplied(
     /^ALTER TABLE "([^"]+)" DROP CONSTRAINT(?: IF EXISTS)? "([^"]+)"/i,
   );
   if (dropConstraintMatch) {
+    // DROP CONSTRAINT IF EXISTS is idempotent; replacements are verified via ADD CONSTRAINT / DO blocks.
+    if (/ IF EXISTS/i.test(normalized) || options.lenientUnknown) return true;
     return !(await constraintExists(sql, dropConstraintMatch[2]));
   }
 
