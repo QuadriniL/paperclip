@@ -354,7 +354,9 @@ async function findSchemaDriftPendingMigrations(
     if (!Number.isFinite(version) || version < SCHEMA_DRIFT_MIGRATION_MIN_VERSION) continue;
 
     const migrationContent = await readMigrationFileContent(migrationFile);
-    const alreadyApplied = await migrationContentAlreadyApplied(sql, migrationContent);
+    const alreadyApplied = await migrationContentAlreadyApplied(sql, migrationContent, {
+      lenientUnknown: true,
+    });
     if (!alreadyApplied) drifted.push(migrationFile);
   }
   return drifted;
@@ -410,9 +412,15 @@ async function constraintExists(
   return rows[0]?.exists ?? false;
 }
 
+type MigrationVerificationOptions = {
+  /** Treat idempotent/ opaque statements (DO blocks, UPDATE) as applied when drift-checking. */
+  lenientUnknown?: boolean;
+};
+
 async function migrationStatementAlreadyApplied(
   sql: ReturnType<typeof postgres>,
   statement: string,
+  options: MigrationVerificationOptions = {},
 ): Promise<boolean> {
   const normalized = statement.replace(/\s+/g, " ").trim();
 
@@ -438,9 +446,24 @@ async function migrationStatementAlreadyApplied(
     return !(await indexExists(sql, dropIndexMatch[1]));
   }
 
+  const dropConstraintMatch = normalized.match(
+    /^ALTER TABLE "([^"]+)" DROP CONSTRAINT(?: IF EXISTS)? "([^"]+)"/i,
+  );
+  if (dropConstraintMatch) {
+    return !(await constraintExists(sql, dropConstraintMatch[2]));
+  }
+
   const addConstraintMatch = normalized.match(/^ALTER TABLE "([^"]+)" ADD CONSTRAINT "([^"]+)"/i);
   if (addConstraintMatch) {
     return constraintExists(sql, addConstraintMatch[2]);
+  }
+
+  if (/^DO \$\$/i.test(normalized) || /^UPDATE /i.test(normalized)) {
+    return options.lenientUnknown ?? false;
+  }
+
+  if (options.lenientUnknown) {
+    return true;
   }
 
   // If we cannot reason about a statement safely, require manual migration.
@@ -450,12 +473,13 @@ async function migrationStatementAlreadyApplied(
 async function migrationContentAlreadyApplied(
   sql: ReturnType<typeof postgres>,
   migrationContent: string,
+  options: MigrationVerificationOptions = {},
 ): Promise<boolean> {
   const statements = splitMigrationStatements(migrationContent);
   if (statements.length === 0) return false;
 
   for (const statement of statements) {
-    const applied = await migrationStatementAlreadyApplied(sql, statement);
+    const applied = await migrationStatementAlreadyApplied(sql, statement, options);
     if (!applied) return false;
   }
 
