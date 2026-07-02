@@ -23,6 +23,11 @@ This document tracks BizCursor-specific Paperclip improvements for environments 
 | JSONC runtime config for OpenCode providers | Upstream [#8075](https://github.com/paperclipai/paperclip/pull/8075) | Branch `bizcursor/upstream-wave-1` (#3) |
 | `opencode export` fallback (v1.15.10+) | Upstream [#6766](https://github.com/paperclipai/paperclip/pull/6766) | Branch `bizcursor/upstream-wave-1` (#3) |
 | Issue `billing_code` → cost-events | Upstream [#6821](https://github.com/paperclipai/paperclip/pull/6821) | Branch `bizcursor/upstream-wave-1` (#3) — chat-mode billing preserved |
+| Active run reaping fix (multi-instance) | Upstream [#8776](https://github.com/paperclipai/paperclip/pull/8776) | Branch `bizcursor/upstream-wave-2` (#4) |
+| Fresh session on comment wakes | Upstream [#6650](https://github.com/paperclipai/paperclip/pull/6650) | Branch `bizcursor/upstream-wave-2` (#4) |
+| Monitored continuation recovery | Upstream [#8813](https://github.com/paperclipai/paperclip/pull/8813) | Branch `bizcursor/upstream-wave-2` (#4) |
+| Billing-limit non-retryable + re-check session reset | Upstream [#8835](https://github.com/paperclipai/paperclip/pull/8835) | Branch `bizcursor/upstream-wave-2` (#4) |
+| Dead silent run auto-timeout | Upstream [#8814](https://github.com/paperclipai/paperclip/pull/8814) | Branch `bizcursor/upstream-wave-2` (#4) |
 
 ## Deferred (follow-up)
 
