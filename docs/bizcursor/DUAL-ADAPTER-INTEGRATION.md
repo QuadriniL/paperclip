@@ -16,17 +16,17 @@ This document tracks BizCursor-specific Paperclip improvements for environments 
 | Omit `PAPERCLIP_WAKE_PAYLOAD_JSON` from cloud envVars | BizCursor spec 2026-07-01 | On `master` (#1) |
 | `clampEnvVarsForCloud()` 4096-byte safety | BizCursor spec | On `master` (#1) |
 | Post-run Cursor usage API → cost-events tokens | BizCursor spec | On `master` (#1) |
-| Drop unreachable Paperclip API callback in cloud | Upstream [#8546](https://github.com/paperclipai/paperclip/pull/8546) | Branch `bizcursor/dual-adapter-integration` |
-| Phantom success detection (no git evidence) | Upstream [#8100](https://github.com/paperclipai/paperclip/pull/8100) | Branch `bizcursor/dual-adapter-integration` |
+| Drop unreachable Paperclip API callback in cloud | Upstream [#8546](https://github.com/paperclipai/paperclip/pull/8546) | On `master` (#2) |
+| Phantom success detection (no git evidence) | Upstream [#8100](https://github.com/paperclipai/paperclip/pull/8100) | On `master` (#2) |
+| Strip JWT secrets from spawned agent env | Upstream [#4734](https://github.com/paperclipai/paperclip/pull/4734) | Branch `bizcursor/upstream-wave-1` (#3) |
+| Remove `OPENCODE_DISABLE_PROJECT_CONFIG` | Upstream [#7292](https://github.com/paperclipai/paperclip/pull/7292) | Branch `bizcursor/upstream-wave-1` (#3) |
+| JSONC runtime config for OpenCode providers | Upstream [#8075](https://github.com/paperclipai/paperclip/pull/8075) | Branch `bizcursor/upstream-wave-1` (#3) |
+| `opencode export` fallback (v1.15.10+) | Upstream [#6766](https://github.com/paperclipai/paperclip/pull/6766) | Branch `bizcursor/upstream-wave-1` (#3) |
+| Issue `billing_code` → cost-events | Upstream [#6821](https://github.com/paperclipai/paperclip/pull/6821) | Branch `bizcursor/upstream-wave-1` (#3) — chat-mode billing preserved |
 
 ## Deferred (follow-up)
 
-| Change | Source | Why deferred |
-|--------|--------|--------------|
-| Billing-limit non-retryable + session reset on re-check | [#8835](https://github.com/paperclipai/paperclip/pull/8835) | Heartbeat merge conflict with fork patches; apply after upstream rebase |
-| `costUsd` pricing fallback | [#333](https://github.com/paperclipai/paperclip/issues/333) | No pricing catalog entry for Cursor models yet |
-| Upstream full rebase | — | Fork ~177 commits behind `paperclipai/master` |
-| `cursor_cloud` chat-mode | BizCursor spec v2 | Issue-centric Dev path is sufficient today |
+See [UPSTREAM-CHERRY-PICK-BACKLOG.md](./UPSTREAM-CHERRY-PICK-BACKLOG.md) for wave 2 items.
 
 ## Smoke tests after deploy
 
