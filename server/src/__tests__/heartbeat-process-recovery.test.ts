@@ -570,6 +570,72 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     return { environmentId, leaseId };
   }
 
+  it("does not reap active adapter executions started by another heartbeat service instance", async () => {
+    let releaseAdapter: (() => void) | null = null;
+    const adapterStarted = new Promise<void>((resolve) => {
+      mockAdapterExecute.mockImplementationOnce(async () => {
+        resolve();
+        await new Promise<void>((release) => {
+          releaseAdapter = release;
+        });
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          errorMessage: null,
+          summary: "Remote run completed.",
+          provider: "test",
+          model: "test-model",
+        };
+      });
+    });
+
+    const { runId, wakeupRequestId } = await seedRunFixture({
+      adapterType: "openclaw_gateway",
+      agentStatus: "idle",
+      runStatus: "queued",
+      processPid: null,
+      processGroupId: null,
+      includeIssue: false,
+    });
+    const executorHeartbeat = heartbeatService(db);
+    const reaperHeartbeat = heartbeatService(db);
+
+    await executorHeartbeat.resumeQueuedRuns();
+    await Promise.race([
+      adapterStarted,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Timed out waiting for adapter execution to start")), 3_000);
+      }),
+    ]);
+
+    await db
+      .update(heartbeatRuns)
+      .set({
+        updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    const result = await reaperHeartbeat.reapOrphanedRuns({ staleThresholdMs: 1 });
+    expect(result).toEqual({ reaped: 0, runIds: [] });
+
+    const activeRun = await reaperHeartbeat.getRun(runId);
+    expect(activeRun?.status).toBe("running");
+    expect(activeRun?.errorCode).toBeNull();
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("claimed");
+
+    if (!releaseAdapter) throw new Error("Adapter release handle was not captured");
+    releaseAdapter();
+    const settledRun = await waitForRunToSettle(executorHeartbeat, runId, 5_000);
+    expect(settledRun?.status).toBe("succeeded");
+  });
+
   async function seedStrandedIssueFixture(input: {
     status: "todo" | "in_progress";
     runStatus: "failed" | "timed_out" | "cancelled" | "succeeded";
@@ -580,6 +646,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     livenessState?: "completed" | "advanced" | "plan_only" | "empty_response" | "blocked" | "failed" | "needs_followup" | null;
     runErrorCode?: string | null;
     runError?: string | null;
+    monitorNextCheckAt?: Date | null;
+    executionPolicy?: Record<string, unknown> | null;
+    executionState?: Record<string, unknown> | null;
   }) {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -678,6 +747,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         assigneeUserId: input.assignToUser ? "user-1" : null,
         checkoutRunId: input.status === "in_progress" ? runId : null,
         executionRunId: null,
+        executionPolicy: input.executionPolicy ?? null,
+        executionState: input.executionState ?? null,
+        monitorNextCheckAt: input.monitorNextCheckAt ?? null,
         issueNumber: input.activePauseHold ? 2 : 1,
         identifier: `${issuePrefix}-${input.activePauseHold ? 2 : 1}`,
         startedAt: input.status === "in_progress" ? now : null,
@@ -2823,6 +2895,44 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     if (retryRun) {
       await waitForRunToSettle(heartbeat, retryRun.id);
     }
+  });
+
+  it("does not requeue continuation recovery for in-progress issues with a future monitor", async () => {
+    const monitorNextCheckAt = new Date("2026-07-29T14:00:00.000Z");
+    const { agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "failed",
+      retryReason: "issue_continuation_needed",
+      runErrorCode: "adapter_failed",
+      runError: "ssh: connection reset",
+      monitorNextCheckAt,
+      executionPolicy: {
+        monitor: {
+          nextCheckAt: monitorNextCheckAt.toISOString(),
+        },
+      },
+      executionState: {
+        monitor: {
+          status: "scheduled",
+          nextCheckAt: monitorNextCheckAt.toISOString(),
+          attemptCount: 0,
+        },
+      },
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(result.continuationRequeued).toBe(0);
+    expect(result.escalated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.issueIds).toEqual([]);
+
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(issue?.status).toBe("in_progress");
+    expect(issue?.monitorNextCheckAt?.toISOString()).toBe(monitorNextCheckAt.toISOString());
+
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs.map((run) => run.id)).toEqual([runId]);
   });
 
   it("escalates after repeated adapter_failed continuation retries with the cause in the comment", async () => {
